@@ -15,4 +15,5 @@ type Sample struct {
 	Timestamp      uint32
 	SequenceNumber uint16
 	Payload        interface{}
+	Level          uint8
 }

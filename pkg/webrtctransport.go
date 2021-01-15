@@ -117,7 +117,12 @@ func NewWebRTCTransport(id string, c Config) *WebRTCTransport {
 			maxlate = 100
 		}
 
-		builder := NewBuilder(track, maxlate)
+		// TODO: this is per user (per track).
+		// ion-sfu knows this from users' SDP.
+		// ion-avp does not know this info. Luckily it seems to be always 1.
+		var audioLevelExtID uint8 = 1
+		builder := NewBuilder(track, maxlate, audioLevelExtID)
+
 		t.mu.Lock()
 		defer t.mu.Unlock()
 		t.builders[id] = builder

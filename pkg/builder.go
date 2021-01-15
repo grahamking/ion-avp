@@ -31,18 +31,19 @@ var (
 
 // Builder Module for building video/audio samples from rtp streams
 type Builder struct {
-	mu            sync.RWMutex
-	stopped       atomicBool
-	onStopHandler func()
-	builder       *samplebuilder.SampleBuilder
-	elements      []Element
-	sequence      uint16
-	track         *webrtc.TrackRemote
-	out           chan *Sample
+	mu              sync.RWMutex
+	stopped         atomicBool
+	onStopHandler   func()
+	builder         *samplebuilder.SampleBuilder
+	elements        []Element
+	sequence        uint16
+	track           *webrtc.TrackRemote
+	out             chan *Sample
+	audioLevelExtID uint8 // RTP extension id of ssrc-audio-level
 }
 
 // NewBuilder Initialize a new audio sample builder
-func NewBuilder(track *webrtc.TrackRemote, maxLate uint16) *Builder {
+func NewBuilder(track *webrtc.TrackRemote, maxLate uint16, levelID uint8) *Builder {
 	var depacketizer rtp.Depacketizer
 	var checker rtp.PartitionHeadChecker
 	switch strings.ToLower(track.Codec().MimeType) {
@@ -60,9 +61,10 @@ func NewBuilder(track *webrtc.TrackRemote, maxLate uint16) *Builder {
 	}
 
 	b := &Builder{
-		builder: samplebuilder.New(maxLate, depacketizer, track.Codec().ClockRate),
-		track:   track,
-		out:     make(chan *Sample, maxSize),
+		builder:         samplebuilder.New(maxLate, depacketizer, track.Codec().ClockRate),
+		track:           track,
+		out:             make(chan *Sample, maxSize),
+		audioLevelExtID: levelID,
 	}
 
 	if checker != nil {
@@ -96,6 +98,7 @@ func (b *Builder) OnStop(f func()) {
 
 func (b *Builder) build() {
 	log.Debugf("Reading rtp for track: %s", b.Track().ID())
+	var level uint8 = 127 // default to silence
 	for {
 		if b.stopped.get() {
 			return
@@ -109,6 +112,17 @@ func (b *Builder) build() {
 			}
 			log.Errorf("Error reading track rtp %s", err)
 			continue
+		}
+
+		if extBytes := pkt.GetExtension(b.audioLevelExtID); extBytes != nil {
+			var alExt rtp.AudioLevelExtension
+			if err := alExt.Unmarshal(extBytes); err != nil {
+				log.Infof("Err unmarshal audio-level ext: %s", err)
+				level = 127
+				// keep going
+			} else {
+				level = alExt.Level
+			}
 		}
 
 		b.builder.Push(pkt)
@@ -132,6 +146,7 @@ func (b *Builder) build() {
 				SequenceNumber: b.sequence,
 				Timestamp:      timestamp,
 				Payload:        sample.Data,
+				Level:          level,
 			}
 			b.sequence++
 		}
